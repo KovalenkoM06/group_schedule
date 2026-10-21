@@ -1,0 +1,8 @@
+include: package:lints/recommended.yaml
+
+linter:
+  rules:
+    - public_member_api_docs
+    - prefer_single_quotes
+    - avoid_positional_boolean_parameters
+    - unnecessary_lambdas

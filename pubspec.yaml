@@ -1,0 +1,11 @@
+name: group_schedule
+description: Лабораторні роботи з програмування мовою Dart (варіант 4 — Розклад занять групи).
+version: 1.0.0
+
+environment:
+  sdk: ^3.13.0
+
+dependencies: {}
+
+dev_dependencies:
+  lints: ^6.0.0
