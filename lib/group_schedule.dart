@@ -101,3 +101,97 @@ const List<String> rawScheduleInput = <String>[
   // 3) Некоректна дата
   'Системне програмування;Кравчук Н. В.;Практична;Середа;2026-99-99T99:00;90;4.3;Г-105',
 ];
+
+/// Розбирає один рядок [line] у [ParseResult] з описом помилки, якщо рядок пошкоджений.
+///
+/// Використовує `split`, `DateTime.tryParse`, `int.tryParse` та `double.tryParse`
+/// без використання блоків `try/catch`.
+ParseResult parseLineWithDetails(String line) {
+  final trimmed = line.trim();
+  if (trimmed.isEmpty) {
+    return (lesson: null, error: 'Порожній рядок');
+  }
+
+  final parts = trimmed.split(fieldSeparator).map((e) => e.trim()).toList();
+  if (parts.length != expectedFieldsCount) {
+    return (
+      lesson: null,
+      error:
+          'Неправильна кількість полів: очікувалось $expectedFieldsCount, '
+          'а отримано ${parts.length}',
+    );
+  }
+
+  final subject = parts[0];
+  final teacher = parts[1];
+  final type = parts[2];
+  final dayOfWeek = parts[3];
+  final rawDate = parts[4];
+  final rawDuration = parts[5];
+  final rawRating = parts[6];
+  final room = parts[7];
+
+  if (subject.isEmpty ||
+      teacher.isEmpty ||
+      type.isEmpty ||
+      dayOfWeek.isEmpty ||
+      room.isEmpty) {
+    return (lesson: null, error: 'Одне з текстових полів порожнє');
+  }
+
+  final startTime = DateTime.tryParse(rawDate);
+  if (startTime == null) {
+    return (lesson: null, error: 'Некоректна дата початку: "$rawDate"');
+  }
+
+  final durationMinutes = int.tryParse(rawDuration);
+  if (durationMinutes == null) {
+    return (
+      lesson: null,
+      error: 'Нечислове значення тривалості: "$rawDuration"',
+    );
+  }
+
+  final rating = double.tryParse(rawRating);
+  if (rating == null) {
+    return (lesson: null, error: 'Нечислове значення оцінки: "$rawRating"');
+  }
+
+  return (
+    lesson: (
+      subject: subject,
+      teacher: teacher,
+      type: type,
+      dayOfWeek: dayOfWeek,
+      startTime: startTime,
+      durationMinutes: durationMinutes,
+      rating: rating,
+      room: room,
+    ),
+    error: null,
+  );
+}
+
+/// Розбирає рядок [line] у запис [Lesson] або повертає `null`, якщо формат некоректний.
+Lesson? parseLine(String line) => parseLineWithDetails(line).lesson;
+
+/// Перевіряє діапазони значень запису [lesson] (рік, тривалість, оцінка, день, тип)
+/// і повертає список знайдених порушень.
+List<String> validateLesson(Lesson lesson) {
+  final year = lesson.startTime.year;
+
+  return <String>[
+    if (!allowedDays.contains(lesson.dayOfWeek))
+      'Невідомий день тижня "${lesson.dayOfWeek}"',
+    if (!allowedLessonTypes.contains(lesson.type))
+      'Невідомий тип заняття "${lesson.type}"',
+    if (year < minAllowedYear || year > maxAllowedYear)
+      'Рік ($year) виходить за межі $minAllowedYear..$maxAllowedYear',
+    if (lesson.durationMinutes < minDurationMinutes ||
+        lesson.durationMinutes > maxDurationMinutes)
+      'Тривалість (${lesson.durationMinutes} хв) поза межами '
+          '$minDurationMinutes..$maxDurationMinutes хв',
+    if (lesson.rating < minCourseRating || lesson.rating > maxCourseRating)
+      'Оцінка (${lesson.rating}) поза межами $minCourseRating..$maxCourseRating',
+  ];
+}
