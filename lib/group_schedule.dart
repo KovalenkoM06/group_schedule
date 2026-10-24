@@ -195,3 +195,87 @@ List<String> validateLesson(Lesson lesson) {
       'Оцінка (${lesson.rating}) поза межами $minCourseRating..$maxCourseRating',
   ];
 }
+
+/// Відбирає лише коректні записи зі списку рядків [lines] через конвеєр і tear-off `parseLine`.
+List<Lesson> parseValidLessons(Iterable<String> lines) => lines
+    .map(parseLine)
+    .whereType<Lesson>()
+    .where((lesson) => validateLesson(lesson).isEmpty)
+    .toList();
+
+/// Конвеєр 1 (Сума): рахує загальну тривалість занять у хвилинах через `where -> map -> fold`.
+int calculateTotalMinutes(Iterable<Lesson> lessons, {String? type}) => lessons
+    .where((lesson) => type == null || lesson.type == type)
+    .map((lesson) => lesson.durationMinutes)
+    .fold<int>(0, (sum, minutes) => sum + minutes);
+
+/// Конвеєр 2 (Середнє): обчислює середній рейтинг занять через `where -> map -> fold`.
+double calculateAverageRating(Iterable<Lesson> lessons, {String? dayOfWeek}) {
+  final result = lessons
+      .where((lesson) => dayOfWeek == null || lesson.dayOfWeek == dayOfWeek)
+      .map((lesson) => lesson.rating)
+      .fold<({double sum, int count})>((
+        sum: 0.0,
+        count: 0,
+      ), (acc, rating) => (sum: acc.sum + rating, count: acc.count + 1));
+  return result.count == 0 ? 0.0 : result.sum / result.count;
+}
+
+/// Конвеєр 3 (Мінімум/максимум): знаходить мінімальну і максимальну тривалість заняття.
+({int min, int max})? findMinMaxDuration(
+  Iterable<Lesson> lessons, {
+  String? teacher,
+}) => lessons
+    .where((lesson) => teacher == null || lesson.teacher == teacher)
+    .map((lesson) => lesson.durationMinutes)
+    .fold<({int min, int max})?>(
+      null,
+      (acc, duration) => acc == null
+          ? (min: duration, max: duration)
+          : (
+              min: duration < acc.min ? duration : acc.min,
+              max: duration > acc.max ? duration : acc.max,
+            ),
+    );
+
+/// Шукає перше заняття за назвою дисципліни [subject] через `firstOrNull`.
+Lesson? findFirstBySubject(Iterable<Lesson> lessons, String subject) =>
+    lessons.where((lesson) => lesson.subject == subject).firstOrNull;
+
+/// Групує заняття у `Map<String, List<Lesson>>` за днем тижня.
+Map<String, List<Lesson>> groupByDay(Iterable<Lesson> lessons) {
+  final grouped = <String, List<Lesson>>{};
+  for (final lesson in lessons) {
+    grouped.putIfAbsent(lesson.dayOfWeek, () => <Lesson>[]).add(lesson);
+  }
+  return grouped;
+}
+
+/// Сортує заняття за часом початку (перший критерій) з перемиканням напряму [ascending].
+List<Lesson> sortByStartTime(
+  Iterable<Lesson> lessons, {
+  bool ascending = true,
+}) {
+  final list = lessons.toList()
+    ..sort((a, b) {
+      final cmp = a.startTime.compareTo(b.startTime);
+      return ascending ? cmp : -cmp;
+    });
+  return list;
+}
+
+/// Сортує заняття за оцінкою та тривалістю (другий критерій) з параметром [ascending].
+List<Lesson> sortByRatingAndDuration(
+  Iterable<Lesson> lessons, {
+  bool ascending = false,
+}) {
+  final list = lessons.toList()
+    ..sort((a, b) {
+      var cmp = a.rating.compareTo(b.rating);
+      if (cmp == 0) {
+        cmp = a.durationMinutes.compareTo(b.durationMinutes);
+      }
+      return ascending ? cmp : -cmp;
+    });
+  return list;
+}
