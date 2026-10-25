@@ -52,6 +52,11 @@ const Set<String> allowedLessonTypes = <String>{
 /// Опорна дата для підрахунку віку записів у днях.
 final DateTime currentSemesterDate = DateTime(2026, 10, 27);
 
+/// Регулярний вираз з іменованими групами для перевірки формату аудиторії (наприклад, І-304 або І-212а).
+final RegExp roomRegExp = RegExp(
+  r'^(?<building>[А-ЯІЇЄҐA-Z]+)-(?<floor>[1-9])(?<room>\d{2}[а-яіїєґa-z]?)$',
+);
+
 /// Запис (Record), що описує одне заняття в розкладі групи.
 ///
 /// Містить основні поля за варіантом 4 (дисципліна, викладач, тип, день тижня,
@@ -193,6 +198,8 @@ List<String> validateLesson(Lesson lesson) {
           '$minDurationMinutes..$maxDurationMinutes хв',
     if (lesson.rating < minCourseRating || lesson.rating > maxCourseRating)
       'Оцінка (${lesson.rating}) поза межами $minCourseRating..$maxCourseRating',
+    if (!isValidRoom(lesson.room))
+      'Неправильний формат аудиторії "${lesson.room}"',
   ];
 }
 
@@ -278,4 +285,45 @@ List<Lesson> sortByRatingAndDuration(
       return ascending ? cmp : -cmp;
     });
   return list;
+}
+
+/// Замикання-лічильник оброблених записів, яке захоплює локальну змінну `count`.
+int Function() makeProcessedCounter([int start = 0]) {
+  var count = start;
+  return () {
+    count++;
+    return count;
+  };
+}
+
+/// Замикання (фабрика предикатів), що захоплює підрядок прізвища [teacherPart] для фільтрації.
+bool Function(Lesson) makeTeacherFilter(String teacherPart) {
+  final query = teacherPart.trim().toLowerCase();
+  return (lesson) => lesson.teacher.toLowerCase().contains(query);
+}
+
+/// Перевіряє формат аудиторії [room] регулярним виразом з іменованими групами.
+bool isValidRoom(String room) {
+  final match = roomRegExp.firstMatch(room.trim());
+  if (match == null) {
+    return false;
+  }
+  return match.namedGroup('building') != null &&
+      match.namedGroup('floor') != null &&
+      match.namedGroup('room') != null;
+}
+
+/// Маскує номер кабінету в шифрі аудиторії [room] через `replaceAllMapped` (наприклад, `І-304` -> `І-3**`).
+String maskRoomNumber(String room) => room.replaceAllMapped(roomRegExp, (m) {
+  final regMatch = m as RegExpMatch;
+  final building = regMatch.namedGroup('building') ?? '?';
+  final floor = regMatch.namedGroup('floor') ?? '?';
+  return '$building-$floor**';
+});
+
+/// Обчислює вік запису [lesson] у днях відносно [now] через `DateTime.difference` і `Duration`.
+int calculateAgeInDays(Lesson lesson, {DateTime? now}) {
+  final targetDate = now ?? currentSemesterDate;
+  final Duration diff = targetDate.difference(lesson.startTime);
+  return diff.inDays;
 }
