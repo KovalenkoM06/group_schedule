@@ -104,7 +104,7 @@ const List<String> rawScheduleInput = <String>[
   // 2) Нечислове значення у числовому полі тривалості
   'Алгоритми і структури даних;Сидоренко О. М.;Лабораторна;Вівторок;2026-10-20T13:45:00;девʼяносто;4.5;І-201',
   // 3) Некоректна дата
-  'Системне програмування;Кравчук Н. В.;Практична;Середа;2026-99-99T99:00;90;4.3;Г-105',
+  'Системне програмування;Кравчук Н. В.;Практична;Середа;некоректна_дата;90;4.3;Г-105',
 ];
 
 /// Розбирає один рядок [line] у [ParseResult] з описом помилки, якщо рядок пошкоджений.
@@ -326,4 +326,88 @@ int calculateAgeInDays(Lesson lesson, {DateTime? now}) {
   final targetDate = now ?? currentSemesterDate;
   final Duration diff = targetDate.difference(lesson.startTime);
   return diff.inDays;
+}
+
+/// Формує текстовий звіт за списком занять [items] за допомогою [StringBuffer].
+///
+/// Підтримує іменовані параметри зі значеннями за замовчуванням:
+/// [topCount], [ascending], [separator] та [maskRooms].
+String buildReport(
+  List<Lesson> items, {
+  int topCount = defaultTopCount,
+  bool ascending = false,
+  String separator = defaultColumnSeparator,
+  bool maskRooms = false,
+}) {
+  final buffer = StringBuffer()
+    ..writeln('=== ЗВІТ ПО РОЗКЛАДУ ЗАНЯТЬ ГРУПИ (Варіант 4) ===');
+
+  if (items.isEmpty) {
+    buffer.writeln('Немає коректних записів для побудови звіту.');
+    return buffer.toString();
+  }
+
+  final totalMinutes = calculateTotalMinutes(items);
+  final avgRating = calculateAverageRating(items);
+  final minMax = findMinMaxDuration(items);
+
+  buffer
+    ..writeln('Усього коректних занять: ${items.length}')
+    ..writeln('Сумарна тривалість: $totalMinutes хв')
+    ..writeln('Середній рейтинг дисциплін: ${avgRating.toStringAsFixed(2)}');
+
+  if (minMax != null) {
+    buffer.writeln(
+      'Тривалість занять: мін = ${minMax.min} хв, макс = ${minMax.max} хв',
+    );
+  }
+
+  buffer
+    ..writeln()
+    ..writeln('Топ-$topCount занять (ascending: $ascending):');
+
+  final sorted = sortByRatingAndDuration(items, ascending: ascending);
+  for (final lesson in sorted.take(topCount)) {
+    final roomText = maskRooms ? maskRoomNumber(lesson.room) : lesson.room;
+    final ageDays = calculateAgeInDays(lesson);
+    final dateStr =
+        '${lesson.startTime.year}-'
+        '${lesson.startTime.month.toString().padLeft(2, '0')}-'
+        '${lesson.startTime.day.toString().padLeft(2, '0')} '
+        '${lesson.startTime.hour.toString().padLeft(2, '0')}:'
+        '${lesson.startTime.minute.toString().padLeft(2, '0')}';
+
+    final line = <String>[
+      lesson.dayOfWeek,
+      dateStr,
+      lesson.subject,
+      lesson.type,
+      lesson.teacher,
+      '${lesson.durationMinutes} хв',
+      'оцінка ${lesson.rating}',
+      'ауд. $roomText',
+      'вік: $ageDays дн.',
+    ].join(separator);
+
+    buffer.writeln('  $line');
+  }
+
+  buffer
+    ..writeln()
+    ..writeln('Групування за днями тижня:');
+
+  final grouped = groupByDay(items);
+  for (final day in allowedDays) {
+    final dayLessons = grouped[day];
+    if (dayLessons != null) {
+      final dayMinutes = calculateTotalMinutes(dayLessons);
+      final dayAvg = calculateAverageRating(dayLessons);
+      buffer.writeln(
+        '  - $day: ${dayLessons.length} занять, '
+        'сумарно $dayMinutes хв, середній бал ${dayAvg.toStringAsFixed(2)}',
+      );
+    }
+  }
+
+  return buffer.toString();
 }
