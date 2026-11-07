@@ -1,4 +1,4 @@
-/// Функції та структури даних для обробки розкладу занять групи (ЛР 1, варіант 4).
+/// Функції, перелічення та моделі даних для обробки розкладу занять групи (варіант 4).
 library;
 
 /// Роздільник полів у вхідних рядках розкладу.
@@ -31,6 +31,58 @@ const int defaultTopCount = 5;
 /// Роздільник стовпців у текстовому звіті за замовчуванням.
 const String defaultColumnSeparator = ' | ';
 
+/// Перелічення навчальних днів тижня з полями, константним конструктором і методами.
+enum DayOfWeek {
+  /// Понеділок.
+  monday('Понеділок', 'Пн', 1),
+
+  /// Вівторок.
+  tuesday('Вівторок', 'Вт', 2),
+
+  /// Середа.
+  wednesday('Середа', 'Ср', 3),
+
+  /// Четвер.
+  thursday('Четвер', 'Чт', 4),
+
+  /// П'ятниця.
+  friday("П'ятниця", 'Пт', 5),
+
+  /// Субота.
+  saturday('Субота', 'Сб', 6, isWeekend: true);
+
+  /// Створює елемент перелічення дня тижня.
+  const DayOfWeek(
+    this.label,
+    this.shortName,
+    this.weekdayNumber, {
+    this.isWeekend = false,
+  });
+
+  /// Повна назва дня тижня українською.
+  final String label;
+
+  /// Скорочене позначення дня тижня.
+  final String shortName;
+
+  /// Порядковий номер дня у тижні (1..6).
+  final int weekdayNumber;
+
+  /// Ознака вихідного або факультативного дня.
+  final bool isWeekend;
+
+  /// Перевіряє, чи відповідає рядок [raw] назві або скороченню цього дня.
+  bool matchesText(String raw) {
+    final normalized = raw.trim().toLowerCase();
+    return label.toLowerCase() == normalized ||
+        shortName.toLowerCase() == normalized;
+  }
+
+  /// Розбирає назву дня тижня з рядка [raw] або повертає `null`.
+  static DayOfWeek? tryParse(String raw) =>
+      values.where((day) => day.matchesText(raw)).firstOrNull;
+}
+
 /// Список навчальних днів тижня.
 const List<String> allowedDays = <String>[
   'Понеділок',
@@ -57,10 +109,37 @@ final RegExp roomRegExp = RegExp(
   r'^(?<building>[А-ЯІЇЄҐA-Z]+)-(?<floor>[1-9])(?<room>\d{2}[а-яіїєґa-z]?)$',
 );
 
+/// Методи розширення для рядків із шифром аудиторії.
+extension RoomStringExtension on String {
+  /// Повертає `true`, якщо рядок відповідає шаблону шифру аудиторії.
+  bool get isValidRoomCode => roomRegExp.hasMatch(trim());
+
+  /// Повертає замаскований шифр аудиторії (наприклад, `І-304` -> `І-3**`).
+  String maskRoomCode() {
+    final match = roomRegExp.firstMatch(trim());
+    if (match == null) {
+      return this;
+    }
+    return '${match.namedGroup('building')}-${match.namedGroup('floor')}**';
+  }
+}
+
+/// Методи розширення для форматування дати та обчислення різниці в днях.
+extension ScheduleDateTimeExtension on DateTime {
+  /// Форматує дату й час початку заняття у вигляді `YYYY-MM-DD HH:MM`.
+  String toScheduleFormat() =>
+      '$year-'
+      '${month.toString().padLeft(2, '0')}-'
+      '${day.toString().padLeft(2, '0')} '
+      '${hour.toString().padLeft(2, '0')}:'
+      '${minute.toString().padLeft(2, '0')}';
+
+  /// Обчислює вік дати у днях відносно [now] або [currentSemesterDate].
+  int ageInDays({DateTime? now}) =>
+      (now ?? currentSemesterDate).difference(this).inDays;
+}
+
 /// Запис (Record), що описує одне заняття в розкладі групи.
-///
-/// Містить основні поля за варіантом 4 (дисципліна, викладач, тип, день тижня,
-/// час початку, аудиторія) та числові поля тривалості й рейтингу для перевірки діапазонів.
 typedef Lesson = ({
   String subject,
   String teacher,
@@ -76,9 +155,6 @@ typedef Lesson = ({
 typedef ParseResult = ({Lesson? lesson, String? error});
 
 /// Константний список вхідних рядків розкладу у CSV-подібному форматі (18 записів).
-///
-/// Формат: `дисципліна;викладач;тип;день_тижня;час_початку;тривалість_хв;оцінка;аудиторія`.
-/// Серед записів є 3 навмисно пошкоджені рядки (№16–18) та 1 запис із виходом за межі діапазонів (№15).
 const List<String> rawScheduleInput = <String>[
   'Програмування мовою Dart;Баличев М. Д.;Лекція;Понеділок;2026-10-19T08:30:00;90;4.9;І-304',
   'Програмування мовою Dart;Баличев М. Д.;Лабораторна;Понеділок;2026-10-19T10:15:00;180;5.0;І-212а',
@@ -108,9 +184,6 @@ const List<String> rawScheduleInput = <String>[
 ];
 
 /// Розбирає один рядок [line] у [ParseResult] з описом помилки, якщо рядок пошкоджений.
-///
-/// Використовує `split`, `DateTime.tryParse`, `int.tryParse` та `double.tryParse`
-/// без використання блоків `try/catch`.
 ParseResult parseLineWithDetails(String line) {
   final trimmed = line.trim();
   if (trimmed.isEmpty) {
@@ -180,13 +253,12 @@ ParseResult parseLineWithDetails(String line) {
 /// Розбирає рядок [line] у запис [Lesson] або повертає `null`, якщо формат некоректний.
 Lesson? parseLine(String line) => parseLineWithDetails(line).lesson;
 
-/// Перевіряє діапазони значень запису [lesson] (рік, тривалість, оцінка, день, тип)
-/// і повертає список знайдених порушень.
+/// Перевіряє діапазони значень запису [lesson] і повертає список знайдених порушень.
 List<String> validateLesson(Lesson lesson) {
   final year = lesson.startTime.year;
 
   return <String>[
-    if (!allowedDays.contains(lesson.dayOfWeek))
+    if (DayOfWeek.tryParse(lesson.dayOfWeek) == null)
       'Невідомий день тижня "${lesson.dayOfWeek}"',
     if (!allowedLessonTypes.contains(lesson.type))
       'Невідомий тип заняття "${lesson.type}"',
@@ -302,42 +374,27 @@ bool Function(Lesson) makeTeacherFilter(String teacherPart) {
   return (lesson) => lesson.teacher.toLowerCase().contains(query);
 }
 
-/// Перевіряє формат аудиторії [room] регулярним виразом з іменованими групами.
-bool isValidRoom(String room) {
-  final match = roomRegExp.firstMatch(room.trim());
-  if (match == null) {
-    return false;
-  }
-  return match.namedGroup('building') != null &&
-      match.namedGroup('floor') != null &&
-      match.namedGroup('room') != null;
-}
+/// Перевіряє формат аудиторії [room] регулярним виразом.
+bool isValidRoom(String room) => room.isValidRoomCode;
 
-/// Маскує номер кабінету в шифрі аудиторії [room] через `replaceAllMapped` (наприклад, `І-304` -> `І-3**`).
-String maskRoomNumber(String room) => room.replaceAllMapped(roomRegExp, (m) {
-  final regMatch = m as RegExpMatch;
-  final building = regMatch.namedGroup('building') ?? '?';
-  final floor = regMatch.namedGroup('floor') ?? '?';
-  return '$building-$floor**';
-});
+/// Маскує номер кабінету в шифрі аудиторії [room] (наприклад, `І-304` -> `І-3**`).
+String maskRoomNumber(String room) => room.maskRoomCode();
 
 /// Обчислює вік запису [lesson] у днях відносно [now] через `DateTime.difference` і `Duration`.
-int calculateAgeInDays(Lesson lesson, {DateTime? now}) {
-  final targetDate = now ?? currentSemesterDate;
-  final Duration diff = targetDate.difference(lesson.startTime);
-  return diff.inDays;
-}
+int calculateAgeInDays(Lesson lesson, {DateTime? now}) =>
+    lesson.startTime.ageInDays(now: now);
 
 /// Формує текстовий звіт за списком занять [items] за допомогою [StringBuffer].
 ///
 /// Підтримує іменовані параметри зі значеннями за замовчуванням:
-/// [topCount], [ascending], [separator] та [maskRooms].
+/// [topCount], [ascending], [separator], [maskRooms] та [now].
 String buildReport(
   List<Lesson> items, {
   int topCount = defaultTopCount,
   bool ascending = false,
   String separator = defaultColumnSeparator,
   bool maskRooms = false,
+  DateTime? now,
 }) {
   final buffer = StringBuffer()
     ..writeln('=== ЗВІТ ПО РОЗКЛАДУ ЗАНЯТЬ ГРУПИ (Варіант 4) ===');
@@ -369,13 +426,8 @@ String buildReport(
   final sorted = sortByRatingAndDuration(items, ascending: ascending);
   for (final lesson in sorted.take(topCount)) {
     final roomText = maskRooms ? maskRoomNumber(lesson.room) : lesson.room;
-    final ageDays = calculateAgeInDays(lesson);
-    final dateStr =
-        '${lesson.startTime.year}-'
-        '${lesson.startTime.month.toString().padLeft(2, '0')}-'
-        '${lesson.startTime.day.toString().padLeft(2, '0')} '
-        '${lesson.startTime.hour.toString().padLeft(2, '0')}:'
-        '${lesson.startTime.minute.toString().padLeft(2, '0')}';
+    final ageDays = calculateAgeInDays(lesson, now: now);
+    final dateStr = lesson.startTime.toScheduleFormat();
 
     final line = <String>[
       lesson.dayOfWeek,
@@ -397,13 +449,13 @@ String buildReport(
     ..writeln('Групування за днями тижня:');
 
   final grouped = groupByDay(items);
-  for (final day in allowedDays) {
-    final dayLessons = grouped[day];
+  for (final day in DayOfWeek.values) {
+    final dayLessons = grouped[day.label];
     if (dayLessons != null) {
       final dayMinutes = calculateTotalMinutes(dayLessons);
       final dayAvg = calculateAverageRating(dayLessons);
       buffer.writeln(
-        '  - $day: ${dayLessons.length} занять, '
+        '  - ${day.label} (${day.shortName}): ${dayLessons.length} занять, '
         'сумарно $dayMinutes хв, середній бал ${dayAvg.toStringAsFixed(2)}',
       );
     }
