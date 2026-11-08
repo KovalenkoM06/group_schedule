@@ -1,4 +1,4 @@
-/// Функції, перелічення та моделі даних для обробки розкладу занять групи (варіант 4).
+/// Функції, перелічення та об'єктна модель розкладу занять групи (варіант 4).
 library;
 
 /// Роздільник полів у вхідних рядках розкладу.
@@ -24,6 +24,12 @@ const double minCourseRating = 1.0;
 
 /// Максимальна оцінка (рейтинг) курсу.
 const double maxCourseRating = 5.0;
+
+/// Тривалість однієї академічної години у хвилинах.
+const int academicHourMinutes = 45;
+
+/// Поріг високого рейтингу дисципліни.
+const double highRatingThreshold = 4.8;
 
 /// Кількість записів для виведення у звіті за замовчуванням.
 const int defaultTopCount = 5;
@@ -139,17 +145,207 @@ extension ScheduleDateTimeExtension on DateTime {
       (now ?? currentSemesterDate).difference(this).inDays;
 }
 
-/// Запис (Record), що описує одне заняття в розкладі групи.
-typedef Lesson = ({
-  String subject,
-  String teacher,
-  String type,
-  String dayOfWeek,
-  DateTime startTime,
-  int durationMinutes,
-  double rating,
-  String room,
-});
+/// Незмінний клас-сутність, що описує одне заняття в розкладі групи.
+class Lesson {
+  /// Константний генеративний конструктор заняття.
+  const Lesson({
+    required this.subject,
+    required this.teacher,
+    required this.type,
+    required this.day,
+    required this.startTime,
+    required this.durationMinutes,
+    required this.rating,
+    required this.room,
+    this._notes,
+  }) : assert(durationMinutes > 0, 'Тривалість має бути додатною');
+
+  /// Іменований конструктор із приватним списком ініціалізації для розібраних полів.
+  Lesson._fromParts(List<String> parts)
+    : subject = parts[0],
+      teacher = parts[1],
+      type = parts[2],
+      day = DayOfWeek.tryParse(parts[3]) ?? DayOfWeek.monday,
+      startTime = DateTime.tryParse(parts[4]) ?? currentSemesterDate,
+      durationMinutes = int.tryParse(parts[5]) ?? minDurationMinutes,
+      rating = double.tryParse(parts[6]) ?? minCourseRating,
+      room = parts[7],
+      _notes = null;
+
+  /// Іменований конструктор `fromCsv`, який створює екземпляр із CSV-рядка [line].
+  ///
+  /// Кидає [FormatException], якщо рядок не відповідає очікуваному формату.
+  Lesson.fromCsv(String line) : this._fromParts(_extractValidCsvParts(line));
+
+  /// Фабричний конструктор із кешуванням розібраних екземплярів у статичному полі [_cache].
+  factory Lesson.cached(String line) {
+    final key = line.trim();
+    return _cache.putIfAbsent(key, () => Lesson.fromCsv(key));
+  }
+
+  /// Фабричний конструктор, який повертає розібраний об'єкт або [defaultLesson] у разі помилки.
+  factory Lesson.fromCsvOrDefault(String line) =>
+      tryParseCsv(line).lesson ?? defaultLesson;
+
+  /// Кеш створених занять за вхідним CSV-рядком.
+  static final Map<String, Lesson> _cache = <String, Lesson>{};
+
+  /// Значення заняття за замовчуванням для пошкоджених рядків.
+  static final Lesson defaultLesson = Lesson(
+    subject: 'Самостійна робота',
+    teacher: 'Черговий викладач',
+    type: 'Консультація',
+    day: DayOfWeek.friday,
+    startTime: currentSemesterDate,
+    durationMinutes: 60,
+    rating: 4.0,
+    room: 'І-101',
+    notes: 'Створено за замовчуванням',
+  );
+
+  /// Назва навчальної дисципліни.
+  final String subject;
+
+  /// Прізвище та ініціали викладача.
+  final String teacher;
+
+  /// Вид заняття (Лекція, Лабораторна, Практична, Консультація).
+  final String type;
+
+  /// День тижня як елемент перелічення [DayOfWeek].
+  final DayOfWeek day;
+
+  /// Дата й час початку заняття.
+  final DateTime startTime;
+
+  /// Тривалість заняття у хвилинах.
+  final int durationMinutes;
+
+  /// Рейтинг (оцінка) курсу.
+  final double rating;
+
+  /// Шифр аудиторії.
+  final String room;
+
+  /// Приватне поле примітки (демонструє промоцію типів приватного `final`-поля).
+  final String? _notes;
+
+  /// Кількість збережених об'єктів у кеші фабричного конструктора.
+  static int get cacheSize => _cache.length;
+
+  /// Очищує кеш фабричного конструктора.
+  static void clearCache() => _cache.clear();
+
+  /// Гетер рядкової назви дня тижня для сумісності зі звітом.
+  String get dayOfWeek => day.label;
+
+  /// Обчислюваний гетер часу завершення заняття.
+  DateTime get endTime => startTime.add(Duration(minutes: durationMinutes));
+
+  /// Обчислюваний гетер кількості академічних годин (по 45 хв).
+  double get academicHours => durationMinutes / academicHourMinutes;
+
+  /// Обчислюваний гетер ознаки високорейтингового курсу.
+  bool get isHighRated => rating >= highRatingThreshold;
+
+  /// Публічний гетер над приватним полем [_notes].
+  String? get notes => _notes;
+
+  /// Повертає форматований опис примітки (приватне `final`-поле [_notes] промотується до `String`).
+  String formatNotes() {
+    if (_notes != null) {
+      return 'Примітка (${_notes.length} симв.): $_notes';
+    }
+    return 'Без додаткових приміток';
+  }
+
+  /// Допоміжний метод перевірки та розбиття CSV-рядка для конструктора `fromCsv`.
+  static List<String> _extractValidCsvParts(String line) {
+    final parsed = tryParseCsv(line);
+    if (parsed.lesson == null) {
+      throw FormatException(parsed.error ?? 'Некоректний CSV-рядок', line);
+    }
+    return line.trim().split(fieldSeparator).map((e) => e.trim()).toList();
+  }
+
+  /// Безпечно розбирає CSV-рядок [line] без винятків, повертаючи [ParseResult].
+  static ParseResult tryParseCsv(String line) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) {
+      return (lesson: null, error: 'Порожній рядок');
+    }
+
+    final parts = trimmed.split(fieldSeparator).map((e) => e.trim()).toList();
+    if (parts.length != expectedFieldsCount) {
+      return (
+        lesson: null,
+        error:
+            'Неправильна кількість полів: очікувалось $expectedFieldsCount, '
+            'а отримано ${parts.length}',
+      );
+    }
+
+    final subject = parts[0];
+    final teacher = parts[1];
+    final type = parts[2];
+    final rawDay = parts[3];
+    final rawDate = parts[4];
+    final rawDuration = parts[5];
+    final rawRating = parts[6];
+    final room = parts[7];
+
+    if (subject.isEmpty ||
+        teacher.isEmpty ||
+        type.isEmpty ||
+        rawDay.isEmpty ||
+        room.isEmpty) {
+      return (lesson: null, error: 'Одне з текстових полів порожнє');
+    }
+
+    final day = DayOfWeek.tryParse(rawDay);
+    if (day == null) {
+      return (lesson: null, error: 'Невідомий день тижня: "$rawDay"');
+    }
+
+    final startTime = DateTime.tryParse(rawDate);
+    if (startTime == null) {
+      return (lesson: null, error: 'Некоректна дата початку: "$rawDate"');
+    }
+
+    final durationMinutes = int.tryParse(rawDuration);
+    if (durationMinutes == null || durationMinutes <= 0) {
+      return (
+        lesson: null,
+        error: 'Нечислове значення тривалості: "$rawDuration"',
+      );
+    }
+
+    final rating = double.tryParse(rawRating);
+    if (rating == null) {
+      return (lesson: null, error: 'Нечислове значення оцінки: "$rawRating"');
+    }
+
+    return (
+      lesson: Lesson(
+        subject: subject,
+        teacher: teacher,
+        type: type,
+        day: day,
+        startTime: startTime,
+        durationMinutes: durationMinutes,
+        rating: rating,
+        room: room,
+      ),
+      error: null,
+    );
+  }
+
+  @override
+  String toString() =>
+      'Lesson($subject, $type, ${day.shortName}, '
+      '${startTime.toScheduleFormat()}..${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}, '
+      '$teacher, ауд. $room, $durationMinutes хв, рейтинг $rating)';
+}
 
 /// Результат розбору одного рядка (або розібране заняття, або текст помилки).
 typedef ParseResult = ({Lesson? lesson, String? error});
@@ -184,82 +380,16 @@ const List<String> rawScheduleInput = <String>[
 ];
 
 /// Розбирає один рядок [line] у [ParseResult] з описом помилки, якщо рядок пошкоджений.
-ParseResult parseLineWithDetails(String line) {
-  final trimmed = line.trim();
-  if (trimmed.isEmpty) {
-    return (lesson: null, error: 'Порожній рядок');
-  }
+ParseResult parseLineWithDetails(String line) => Lesson.tryParseCsv(line);
 
-  final parts = trimmed.split(fieldSeparator).map((e) => e.trim()).toList();
-  if (parts.length != expectedFieldsCount) {
-    return (
-      lesson: null,
-      error:
-          'Неправильна кількість полів: очікувалось $expectedFieldsCount, '
-          'а отримано ${parts.length}',
-    );
-  }
+/// Розбирає рядок [line] в об'єкт [Lesson] або повертає `null`, якщо формат некоректний.
+Lesson? parseLine(String line) => Lesson.tryParseCsv(line).lesson;
 
-  final subject = parts[0];
-  final teacher = parts[1];
-  final type = parts[2];
-  final dayOfWeek = parts[3];
-  final rawDate = parts[4];
-  final rawDuration = parts[5];
-  final rawRating = parts[6];
-  final room = parts[7];
-
-  if (subject.isEmpty ||
-      teacher.isEmpty ||
-      type.isEmpty ||
-      dayOfWeek.isEmpty ||
-      room.isEmpty) {
-    return (lesson: null, error: 'Одне з текстових полів порожнє');
-  }
-
-  final startTime = DateTime.tryParse(rawDate);
-  if (startTime == null) {
-    return (lesson: null, error: 'Некоректна дата початку: "$rawDate"');
-  }
-
-  final durationMinutes = int.tryParse(rawDuration);
-  if (durationMinutes == null) {
-    return (
-      lesson: null,
-      error: 'Нечислове значення тривалості: "$rawDuration"',
-    );
-  }
-
-  final rating = double.tryParse(rawRating);
-  if (rating == null) {
-    return (lesson: null, error: 'Нечислове значення оцінки: "$rawRating"');
-  }
-
-  return (
-    lesson: (
-      subject: subject,
-      teacher: teacher,
-      type: type,
-      dayOfWeek: dayOfWeek,
-      startTime: startTime,
-      durationMinutes: durationMinutes,
-      rating: rating,
-      room: room,
-    ),
-    error: null,
-  );
-}
-
-/// Розбирає рядок [line] у запис [Lesson] або повертає `null`, якщо формат некоректний.
-Lesson? parseLine(String line) => parseLineWithDetails(line).lesson;
-
-/// Перевіряє діапазони значень запису [lesson] і повертає список знайдених порушень.
+/// Перевіряє діапазони значень об'єкта [lesson] і повертає список знайдених порушень.
 List<String> validateLesson(Lesson lesson) {
   final year = lesson.startTime.year;
 
   return <String>[
-    if (DayOfWeek.tryParse(lesson.dayOfWeek) == null)
-      'Невідомий день тижня "${lesson.dayOfWeek}"',
     if (!allowedLessonTypes.contains(lesson.type))
       'Невідомий тип заняття "${lesson.type}"',
     if (year < minAllowedYear || year > maxAllowedYear)
@@ -385,9 +515,6 @@ int calculateAgeInDays(Lesson lesson, {DateTime? now}) =>
     lesson.startTime.ageInDays(now: now);
 
 /// Формує текстовий звіт за списком занять [items] за допомогою [StringBuffer].
-///
-/// Підтримує іменовані параметри зі значеннями за замовчуванням:
-/// [topCount], [ascending], [separator], [maskRooms] та [now].
 String buildReport(
   List<Lesson> items, {
   int topCount = defaultTopCount,
@@ -435,7 +562,7 @@ String buildReport(
       lesson.subject,
       lesson.type,
       lesson.teacher,
-      '${lesson.durationMinutes} хв',
+      '${lesson.durationMinutes} хв (${lesson.academicHours.toStringAsFixed(1)} акад. год)',
       'оцінка ${lesson.rating}',
       'ауд. $roomText',
       'вік: $ageDays дн.',
