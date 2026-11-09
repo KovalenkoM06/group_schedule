@@ -145,32 +145,33 @@ extension ScheduleDateTimeExtension on DateTime {
       (now ?? currentSemesterDate).difference(this).inDays;
 }
 
-/// Незмінний клас-сутність, що описує одне заняття в розкладі групи.
-class Lesson {
-  /// Константний генеративний конструктор заняття.
-  const Lesson({
-    required this.subject,
-    required this.teacher,
-    required this.type,
-    required this.day,
-    required this.startTime,
-    required this.durationMinutes,
-    required this.rating,
-    required this.room,
-    this._notes,
-  }) : assert(durationMinutes > 0, 'Тривалість має бути додатною');
+/// Незмінний клас-сутність заняття в розкладі групи з первинним конструктором (Dart 3.13).
+class const Lesson({
+  required final String subject,
+  required final String teacher,
+  required final String type,
+  required final DayOfWeek day,
+  required final DateTime startTime,
+  required final int durationMinutes,
+  required final double rating,
+  required final String room,
+  final String? _notes,
+}) {
+  /// Перевірка інваріанта первинного конструктора у списку ініціалізації.
+  this : assert(durationMinutes > 0, 'Тривалість має бути додатною');
 
-  /// Іменований конструктор із приватним списком ініціалізації для розібраних полів.
+  /// Допоміжний перенаправляючий конструктор для створення з розібраних полів.
   Lesson._fromParts(List<String> parts)
-    : subject = parts[0],
-      teacher = parts[1],
-      type = parts[2],
-      day = DayOfWeek.tryParse(parts[3]) ?? DayOfWeek.monday,
-      startTime = DateTime.tryParse(parts[4]) ?? currentSemesterDate,
-      durationMinutes = int.tryParse(parts[5]) ?? minDurationMinutes,
-      rating = double.tryParse(parts[6]) ?? minCourseRating,
-      room = parts[7],
-      _notes = null;
+    : this(
+        subject: parts[0],
+        teacher: parts[1],
+        type: parts[2],
+        day: DayOfWeek.tryParse(parts[3]) ?? DayOfWeek.monday,
+        startTime: DateTime.tryParse(parts[4]) ?? currentSemesterDate,
+        durationMinutes: int.tryParse(parts[5]) ?? minDurationMinutes,
+        rating: double.tryParse(parts[6]) ?? minCourseRating,
+        room: parts[7],
+      );
 
   /// Іменований конструктор `fromCsv`, який створює екземпляр із CSV-рядка [line].
   ///
@@ -202,33 +203,6 @@ class Lesson {
     room: 'І-101',
     notes: 'Створено за замовчуванням',
   );
-
-  /// Назва навчальної дисципліни.
-  final String subject;
-
-  /// Прізвище та ініціали викладача.
-  final String teacher;
-
-  /// Вид заняття (Лекція, Лабораторна, Практична, Консультація).
-  final String type;
-
-  /// День тижня як елемент перелічення [DayOfWeek].
-  final DayOfWeek day;
-
-  /// Дата й час початку заняття.
-  final DateTime startTime;
-
-  /// Тривалість заняття у хвилинах.
-  final int durationMinutes;
-
-  /// Рейтинг (оцінка) курсу.
-  final double rating;
-
-  /// Шифр аудиторії.
-  final String room;
-
-  /// Приватне поле примітки (демонструє промоцію типів приватного `final`-поля).
-  final String? _notes;
 
   /// Кількість збережених об'єктів у кеші фабричного конструктора.
   static int get cacheSize => _cache.length;
@@ -339,6 +313,31 @@ class Lesson {
       error: null,
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Lesson &&
+          subject == other.subject &&
+          teacher == other.teacher &&
+          type == other.type &&
+          day == other.day &&
+          startTime == other.startTime &&
+          durationMinutes == other.durationMinutes &&
+          rating == other.rating &&
+          room == other.room;
+
+  @override
+  int get hashCode => Object.hash(
+    subject,
+    teacher,
+    type,
+    day,
+    startTime,
+    durationMinutes,
+    rating,
+    room,
+  );
 
   @override
   String toString() =>
