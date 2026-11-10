@@ -145,6 +145,213 @@ extension ScheduleDateTimeExtension on DateTime {
       (now ?? currentSemesterDate).difference(this).inDays;
 }
 
+/// Інтерфейс для сутностей, які мають унікальний рядковий ідентифікатор.
+abstract interface class Identifiable {
+  /// Унікальний ідентифікатор сутності у сховищі.
+  String get id;
+}
+
+/// Узагальнене сховище сутностей предметної області з обмеженням типу [Identifiable].
+class Repository<T extends Identifiable> {
+  final Map<String, T> _items = <String, T>{};
+
+  /// Додає або оновлює сутність [item] у сховищі за її `id`.
+  void add(T item) => _items[item.id] = item;
+
+  /// Додає колекцію сутностей [items] до сховища.
+  void addAll(Iterable<T> items) {
+    for (final item in items) {
+      add(item);
+    }
+  }
+
+  /// Повертає сутність за ідентифікатором [id] або `null`, якщо її не знайдено.
+  T? findById(String id) => _items[id];
+
+  /// Відбирає сутності за умовою [test].
+  Iterable<T> where(bool Function(T) test) => _items.values.where(test);
+
+  /// Повертає незмінний список усіх збережених сутностей.
+  List<T> get all => List<T>.unmodifiable(_items.values);
+
+  /// Кількість елементів у сховищі.
+  int get length => _items.length;
+}
+
+/// Запечатаний базовий клас (sealed class) ієрархії видів навчальної активності.
+sealed class LessonActivity {
+  /// Константний конструктор базового класу активності.
+  const LessonActivity(this.typeName);
+
+  /// Назва виду активності.
+  final String typeName;
+
+  /// Поліморфний метод оцінки часу самостійної підготовки студента (у хвилинах).
+  int estimateSelfStudyMinutes(int classroomMinutes);
+
+  /// Поліморфний опис особливостей проведення заняття.
+  String describeActivity();
+
+  /// Створює відповідний підтип [LessonActivity] за назвою типу [type].
+  static LessonActivity fromTypeName(String type) => switch (type.trim()) {
+    'Лекція' => const LectureActivity(),
+    'Лабораторна' => const LabActivity(),
+    'Практична' => const PracticeActivity(),
+    'Консультація' => const ConsultationActivity(),
+    _ => const LectureActivity(hasPresentation: false),
+  };
+}
+
+/// Підтип для лекційного заняття.
+class LectureActivity extends LessonActivity {
+  /// Створює опис лекційного заняття.
+  const LectureActivity({this.hasPresentation = true}) : super('Лекція');
+
+  /// Чи супроводжується лекція слайд-презентацією.
+  final bool hasPresentation;
+
+  @override
+  int estimateSelfStudyMinutes(int classroomMinutes) => classroomMinutes ~/ 2;
+
+  @override
+  String describeActivity() =>
+      hasPresentation ? 'Лекція зі слайдами' : 'Традиційна лекція';
+}
+
+/// Підтип для лабораторної роботи зі списком ініціалізації та `assert`.
+class LabActivity extends LessonActivity {
+  /// Створює опис лабораторного заняття на [variantsCount] варіантів.
+  const LabActivity({this.variantsCount = 15})
+    : assert(variantsCount > 0, 'Кількість варіантів має бути додатною'),
+      super('Лабораторна');
+
+  /// Кількість індивідуальних варіантів у лабораторному практикумі.
+  final int variantsCount;
+
+  @override
+  int estimateSelfStudyMinutes(int classroomMinutes) => classroomMinutes * 2;
+
+  @override
+  String describeActivity() =>
+      'Лабораторний практикум ($variantsCount варіантів)';
+}
+
+/// Підтип для практичного заняття.
+class PracticeActivity extends LessonActivity {
+  /// Створює опис практичного заняття з [tasksCount] задачами.
+  const PracticeActivity({this.tasksCount = 6})
+    : assert(tasksCount > 0, 'Кількість задач має бути додатною'),
+      super('Практична');
+
+  /// Кількість практичних задач на пару.
+  final int tasksCount;
+
+  @override
+  int estimateSelfStudyMinutes(int classroomMinutes) => classroomMinutes;
+
+  @override
+  String describeActivity() => 'Практичний розбір ($tasksCount завдань)';
+}
+
+/// Четвертий підтип для консультації перед захистом або іспитом.
+class ConsultationActivity extends LessonActivity {
+  /// Створює опис консультації.
+  const ConsultationActivity({this.isRemoteAllowed = true})
+    : super('Консультація');
+
+  /// Чи дозволено дистанційне підключення.
+  final bool isRemoteAllowed;
+
+  @override
+  int estimateSelfStudyMinutes(int classroomMinutes) => classroomMinutes ~/ 3;
+
+  @override
+  String describeActivity() =>
+      isRemoteAllowed ? 'Дистанційна консультація' : 'Очна консультація';
+}
+
+/// Обчислює ваговий коефіцієнт складності за підтипом [activity] через `switch`-вираз без `default`.
+double activityWeight(LessonActivity activity) => switch (activity) {
+  LectureActivity(:final hasPresentation) => hasPresentation ? 1.0 : 1.1,
+  LabActivity(:final variantsCount) => variantsCount >= 15 ? 1.5 : 1.3,
+  PracticeActivity(:final tasksCount) => tasksCount >= 5 ? 1.25 : 1.15,
+  ConsultationActivity(:final isRemoteAllowed) => isRemoteAllowed ? 0.8 : 0.9,
+};
+
+/// Базовий абстрактний клас для будь-якої події, закріпленої за аудиторією університету.
+abstract class RoomOccupant {
+  /// Константний конструктор для підкласів.
+  const RoomOccupant();
+
+  /// Шифр аудиторії, у якій відбувається подія.
+  String get room;
+
+  /// Тривалість зайнятості аудиторії у хвилинах.
+  int get durationMinutes;
+}
+
+/// Домішка з обмеженням `on RoomOccupant` для перевірки та маскування аудиторії.
+mixin RoomValidationMixin on RoomOccupant {
+  /// Чи має шифр аудиторії коректний формат.
+  bool get hasValidRoomFormat => room.isValidRoomCode;
+
+  /// Повертає замаскований номер аудиторії.
+  String get maskedRoom => room.maskRoomCode();
+
+  /// Повертає позначення корпусу з шифру аудиторії або `'?'`.
+  String get buildingCode =>
+      roomRegExp.firstMatch(room.trim())?.namedGroup('building') ?? '?';
+
+  /// Короткий опис завантаженості аудиторії.
+  String describeRoomUsage() =>
+      'Корпус $buildingCode, ауд. $room ($durationMinutes хв)';
+}
+
+/// Окрема гілка ієрархії — позарозкладні академічні заходи (іспити, комісії).
+abstract class AcademicEvent extends RoomOccupant {
+  /// Створює академічний захід.
+  const AcademicEvent({required this.title, required this.organizer});
+
+  /// Назва заходу.
+  final String title;
+
+  /// Відповідальний викладач або екзаменатор.
+  final String organizer;
+}
+
+/// Клас екзаменаційної сесії (другий клас із іншої гілки ієрархії, що використовує [RoomValidationMixin]).
+class ExamSession extends AcademicEvent
+    with RoomValidationMixin
+    implements Identifiable {
+  /// Створює запис про іспит зі списком ініціалізації.
+  ExamSession({
+    required super.title,
+    required super.organizer,
+    required this.examDate,
+    required this.room,
+    this.durationMinutes = 120,
+  }) : assert(durationMinutes > 0, 'Тривалість іспиту має бути додатною'),
+       id = 'exam_${examDate.toIso8601String()}_$room';
+
+  /// Ідентифікатор іспиту, ініціалізований у списку ініціалізації.
+  @override
+  final String id;
+
+  /// Дата й час проведення іспиту.
+  final DateTime examDate;
+
+  @override
+  final String room;
+
+  @override
+  final int durationMinutes;
+
+  @override
+  String toString() =>
+      'ExamSession($title, ${examDate.toScheduleFormat()}, '
+      'екзаменатор: $organizer, ${describeRoomUsage()})';
+}
+
 /// Незмінний клас-сутність заняття в розкладі групи з первинним конструктором (Dart 3.13).
 class const Lesson({
   required final String subject,
@@ -152,13 +359,13 @@ class const Lesson({
   required final String type,
   required final DayOfWeek day,
   required final DateTime startTime,
-  required final int durationMinutes,
+  @override required final int durationMinutes,
   required final double rating,
-  required final String room,
+  @override required final String room,
   final String? _notes,
-}) {
+}) extends RoomOccupant with RoomValidationMixin implements Identifiable {
   /// Перевірка інваріанта первинного конструктора у списку ініціалізації.
-  this : assert(durationMinutes > 0, 'Тривалість має бути додатною');
+  this : assert(durationMinutes > 0, 'Тривалість має бути додатною'), super();
 
   /// Допоміжний перенаправляючий конструктор для створення з розібраних полів.
   Lesson._fromParts(List<String> parts)
@@ -210,6 +417,13 @@ class const Lesson({
   /// Очищує кеш фабричного конструктора.
   static void clearCache() => _cache.clear();
 
+  /// Унікальний ідентифікатор заняття для узагальненого сховища [Repository].
+  @override
+  String get id => '${day.shortName}_${startTime.toIso8601String()}_$room';
+
+  /// Об'єкт підтипу запечатаного класу [LessonActivity] відповідно до виду заняття.
+  LessonActivity get activity => LessonActivity.fromTypeName(type);
+
   /// Гетер рядкової назви дня тижня для сумісності зі звітом.
   String get dayOfWeek => day.label;
 
@@ -221,6 +435,10 @@ class const Lesson({
 
   /// Обчислюваний гетер ознаки високорейтингового курсу.
   bool get isHighRated => rating >= highRatingThreshold;
+
+  /// Обчислюваний гетер рекомендованого часу самостійної роботи за поліморфним методом [activity].
+  int get recommendedSelfStudyMinutes =>
+      activity.estimateSelfStudyMinutes(durationMinutes);
 
   /// Публічний гетер над приватним полем [_notes].
   String? get notes => _notes;
@@ -399,7 +617,7 @@ List<String> validateLesson(Lesson lesson) {
           '$minDurationMinutes..$maxDurationMinutes хв',
     if (lesson.rating < minCourseRating || lesson.rating > maxCourseRating)
       'Оцінка (${lesson.rating}) поза межами $minCourseRating..$maxCourseRating',
-    if (!isValidRoom(lesson.room))
+    if (!lesson.hasValidRoomFormat)
       'Неправильний формат аудиторії "${lesson.room}"',
   ];
 }
@@ -551,7 +769,7 @@ String buildReport(
 
   final sorted = sortByRatingAndDuration(items, ascending: ascending);
   for (final lesson in sorted.take(topCount)) {
-    final roomText = maskRooms ? maskRoomNumber(lesson.room) : lesson.room;
+    final roomText = maskRooms ? lesson.maskedRoom : lesson.room;
     final ageDays = calculateAgeInDays(lesson, now: now);
     final dateStr = lesson.startTime.toScheduleFormat();
 
