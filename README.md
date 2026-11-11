@@ -1,32 +1,27 @@
-# Лабораторні роботи №1–2 — Розклад занять групи (Варіант 4)
+# Лабораторна робота №2 — Розклад занять групи (Варіант 4)
 
 Проєкт з дисципліни «Програмування мовою Dart» (варіант 4, номер у списку збірної групи — 19: `19 % 15 = 4`).
 Предметна область: **Розклад занять групи** (`дисципліна, викладач, тип, день тижня, час початку, аудиторія`, а також числові поля тривалості заняття у хвилинах та оцінки/рейтингу курсу).
 
 ## Структура програми
 
-Проєкт створено командою `dart create -t console group_schedule`:
-- `lib/group_schedule.dart` — містить константи, перелічення з членами `DayOfWeek`, методи розширення (`RoomStringExtension`, `ScheduleDateTimeExtension`), інтерфейс `Identifiable`, узагальнене сховище `Repository<T extends Identifiable>`, запечатану ієрархію `LessonActivity`, домішку `RoomValidationMixin on RoomOccupant`, незмінний клас-сутність `Lesson`, а також функції валідації, конвеєри обробки колекцій і побудову текстового звіту.
+Проєкт створено командою `dart create -t console group_schedule` і розвивається послідовно від роботи до роботи:
+- `lib/group_schedule.dart` — містить константи, перелічення з членами `DayOfWeek`, методи розширення (`RoomStringExtension`, `ScheduleDateTimeExtension`), інтерфейс `Identifiable`, узагальнене сховище `Repository<T extends Identifiable>`, запечатану ієрархію `LessonActivity`, домішку `RoomValidationMixin on RoomOccupant`, незмінний клас-сутність `Lesson`, а також збережені з першої роботи функції валідації, замикання, конвеєри обробки колекцій (`where -> map -> fold`) і побудову звіту через `StringBuffer`.
 - `bin/group_schedule.dart` — точка входу `main()`, яка демонструє розбір рядків, роботу сховища, перевірку рівності об'єктів у `Set`, поліморфізм і зіставлення зі зразком.
 
-## Прийняті рішення в Лабораторній роботі №2 (ООП-модель)
+## Вибір типів даних та ООП-моделі
 
-1. **Незмінний клас `Lesson` і первинний конструктор (Dart 3.13):**
-   Запис `Record` із першої роботи замінено на незмінний клас `Lesson` (`class const Lesson({...})`), де всі поля оголошені як `final`, а інваріант `durationMinutes > 0` перевіряється у списку ініціалізації первинного конструктора (`this : assert(...)`). Додано обчислювані гетери `id`, `endTime`, `academicHours`, `isHighRated`, `recommendedSelfStudyMinutes`, іменований конструктор `Lesson.fromCsv` та два фабричні конструктори: `Lesson.cached` (кешує створені екземпляри у статичному `Map<String, Lesson> _cache`) і `Lesson.fromCsvOrDefault` (повертає константний зразок `defaultLesson`, якщо вхідний рядок пошкоджений).
-2. **Рівність за значенням (`==` і `hashCode`):**
-   У класі `Lesson` перевизначено `operator ==` та `hashCode` через `Object.hash(...)`, завдяки чому два окремо створені об'єкти з однаковими даними вважаються рівними і не дублюються у множині `Set<Lesson>`.
-3. **Запечатана ієрархія (`sealed class LessonActivity`) та поліморфізм:**
-   Види навчальних занять представлено запечатаним класом `LessonActivity` із чотирма підтипами (`LectureActivity`, `LabActivity`, `PracticeActivity`, `ConsultationActivity`). Кожен підтип реалізує поліморфні методи `estimateSelfStudyMinutes` і `describeActivity`, а функція `activityWeight` обчислює коефіцієнт складності через вичерпний `switch`-вираз без гілки `default`.
-4. **Домішка з обмеженням `on` (`RoomValidationMixin on RoomOccupant`):**
-   Перевірку та маскування шифру аудиторії винесено в домішку `RoomValidationMixin` з обмеженням `on RoomOccupant` і підмішано до двох класів із різних гілок ієрархії: `Lesson` (навчальне заняття розкладу) та `ExamSession extends AcademicEvent` (екзаменаційний захід). Звичайне успадкування `extends` тут не підходить, бо в Dart клас може мати лише один надклас, а `ExamSession` уже успадковує `AcademicEvent`.
-5. **Узагальнене сховище (`Repository<T extends Identifiable>`):**
-   Клас-сховище зберігає елементи у приватному `Map<String, T> _items`. Обмеження `T extends Identifiable` гарантує компілятору наявність гетера `item.id` для кожного елемента.
-6. **Перелічення з членами, записи та зіставлення зі зразком:**
-   Дні тижня описано переліченням `DayOfWeek` із полями (`label`, `shortName`, `weekdayNumber`, `isWeekend`), константним конструктором і методом `matchesText`. Функції `parseLineWithDetails`, `findMinMaxDuration` і `summarizeSchedule` повертають записи (`Record`), які розбираються через деструктуризацію (`final (:lesson, :error) = ...`), а функція `classifyLessonLoad` використовує зразки об'єктів `Lesson(...)` з охоронцями `when`.
+У другій лабораторній роботі процедурну модель із першої роботи переведено на класи та ієрархію типів:
+- **Незмінний клас `Lesson` і первинний конструктор (Dart 3.13)** — замінив `typedef Lesson` із ЛР №1. Усі поля оголошені як `final`, а інваріант `durationMinutes > 0` перевіряється у списку ініціалізації первинного конструктора (`this : assert(...)`). Додано обчислювані гетери `id`, `endTime`, `academicHours`, `isHighRated`, `recommendedSelfStudyMinutes`, іменований конструктор `Lesson.fromCsv` та два фабричні конструктори: `Lesson.cached` (кешує створені екземпляри у статичному `Map<String, Lesson> _cache`) і `Lesson.fromCsvOrDefault` (повертає константний зразок `defaultLesson`, якщо вхідний рядок пошкоджений).
+- **Рівність за значенням (`==` і `hashCode`)** — у класі `Lesson` перевизначено `operator ==` та `hashCode` через `Object.hash(...)`, завдяки чому два окремо створені об'єкти з однаковими даними вважаються рівними і не дублюються у множині `Set<Lesson>`.
+- **Запечатана ієрархія (`sealed class LessonActivity`) та поліморфізм** — види навчальних занять представлено запечатаним класом `LessonActivity` із чотирма підтипами (`LectureActivity`, `LabActivity`, `PracticeActivity`, `ConsultationActivity`). Кожен підтип реалізує поліморфні методи `estimateSelfStudyMinutes` і `describeActivity`, а функція `activityWeight` обчислює коефіцієнт складності через вичерпний `switch`-вираз без гілки `default`.
+- **Домішка з обмеженням `on` (`RoomValidationMixin on RoomOccupant`)** — перевірку та маскування шифру аудиторії винесено в домішку з обмеженням `on RoomOccupant` і підмішано до двох класів із різних гілок ієрархії: `Lesson` та `ExamSession extends AcademicEvent`. Звичайне успадкування `extends` тут не підходить, бо в Dart клас може мати лише один надклас, а `ExamSession` уже успадковує `AcademicEvent`.
+- **Узагальнене сховище (`Repository<T extends Identifiable>`)** — зберігає елементи у приватному `Map<String, T> _items`. Обмеження `T extends Identifiable` гарантує компілятору наявність гетера `item.id` для кожного елемента.
+- **Перелічення з членами (`DayOfWeek`), колекції (`List`, `Set`, `Map`), записи (`Record`) та зразки (`when`)** — дні тижня описано переліченням `DayOfWeek` із полями, константним конструктором і методом `matchesText`. Функції `parseLineWithDetails`, `findMinMaxDuration` і `summarizeSchedule` повертають записи (`Record`), які розбираються через деструктуризацію (`final (:lesson, :error) = ...`), а функція `classifyLessonLoad` використовує зразки об'єктів `Lesson(...)` з охоронцями `when`.
 
 ## Обґрунтування щодо `!`, `late` та `dynamic`
 
-У коді проєкту **не використано жодного оператора `!`, ключового слова `late` або типу `dynamic`**:
+У коді лабораторної роботи **не використано жодного оператора `!`, ключового слова `late` або типу `dynamic`**:
 - Замість оператора `!` використовуються локальні `final`-змінні та приватне `final`-поле `_notes`, для яких після перевірки `!= null` автоматично спрацьовує промоція типів (type promotion). У методі `maskRoomCode` значення груп регулярного виразу підставляються безпосередньо в інтерполяцію рядка після перевірки `firstMatch` на `null`.
 - Ключове слово `late` не використовується, оскільки всі поля об'єктів ініціалізуються в конструкторах або списках ініціалізації до початку виконання тіла конструктора.
 - Тип `dynamic` не застосовується — усі узагальнені класи та функції мають строгу статичну типізацію.
