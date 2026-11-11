@@ -567,6 +567,49 @@ class const Lesson({
 /// Результат розбору одного рядка (або розібране заняття, або текст помилки).
 typedef ParseResult = ({Lesson? lesson, String? error});
 
+/// Зведена статистика розкладу (повертається як запис для подальшої деструктуризації).
+typedef ScheduleSummary = ({
+  int totalCount,
+  int totalMinutes,
+  int selfStudyMinutes,
+  double averageRating,
+});
+
+/// Обчислює зведені показники за списком занять [lessons] і повертає їх одним записом [ScheduleSummary].
+ScheduleSummary summarizeSchedule(Iterable<Lesson> lessons) {
+  final list = lessons.toList();
+  final totalMinutes = calculateTotalMinutes(list);
+  final selfStudyMinutes = list
+      .map((lesson) => lesson.recommendedSelfStudyMinutes)
+      .fold<int>(0, (sum, value) => sum + value);
+  final averageRating = calculateAverageRating(list);
+
+  return (
+    totalCount: list.length,
+    totalMinutes: totalMinutes,
+    selfStudyMinutes: selfStudyMinutes,
+    averageRating: averageRating,
+  );
+}
+
+/// Класифікує навчальне навантаження заняття [lesson] через зіставлення зі зразком та охоронці (`when`).
+String classifyLessonLoad(Lesson lesson) => switch (lesson) {
+  Lesson(:final activity, :final durationMinutes, :final rating)
+      when activity is LabActivity &&
+          durationMinutes >= 180 &&
+          rating >= highRatingThreshold =>
+    'Інтенсивний практикум (подвійна лабораторна, високий рейтинг)',
+  Lesson(:final activity, :final rating)
+      when activity is LectureActivity && rating >= highRatingThreshold =>
+    'Ключова потокова лекція профільної дисципліни',
+  Lesson(:final day, :final activity)
+      when day == DayOfWeek.friday && activity is ConsultationActivity =>
+    'Підсумкова консультація наприкінці тижня',
+  Lesson(:final durationMinutes) when durationMinutes > 90 =>
+    'Подовжене аудиторне заняття ($durationMinutes хв)',
+  _ => 'Стандартне планове заняття',
+};
+
 /// Константний список вхідних рядків розкладу у CSV-подібному форматі (18 записів).
 const List<String> rawScheduleInput = <String>[
   'Програмування мовою Dart;Баличев М. Д.;Лекція;Понеділок;2026-10-19T08:30:00;90;4.9;І-304',
@@ -748,19 +791,21 @@ String buildReport(
     return buffer.toString();
   }
 
-  final totalMinutes = calculateTotalMinutes(items);
-  final avgRating = calculateAverageRating(items);
-  final minMax = findMinMaxDuration(items);
+  final (:totalCount, :totalMinutes, :selfStudyMinutes, :averageRating) =
+      summarizeSchedule(items);
 
   buffer
-    ..writeln('Усього коректних занять: ${items.length}')
-    ..writeln('Сумарна тривалість: $totalMinutes хв')
-    ..writeln('Середній рейтинг дисциплін: ${avgRating.toStringAsFixed(2)}');
-
-  if (minMax != null) {
-    buffer.writeln(
-      'Тривалість занять: мін = ${minMax.min} хв, макс = ${minMax.max} хв',
+    ..writeln('Усього коректних занять: $totalCount')
+    ..writeln(
+      'Сумарна тривалість: $totalMinutes хв '
+      '(самостійна робота: $selfStudyMinutes хв)',
+    )
+    ..writeln(
+      'Середній рейтинг дисциплін: ${averageRating.toStringAsFixed(2)}',
     );
+
+  if (findMinMaxDuration(items) case (:final min, :final max)) {
+    buffer.writeln('Тривалість занять: мін = $min хв, макс = $max хв');
   }
 
   buffer
