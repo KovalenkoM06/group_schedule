@@ -6,3 +6,5 @@ linter:
     - prefer_single_quotes
     - avoid_positional_boolean_parameters
     - unnecessary_lambdas
+    - unawaited_futures
+    - discarded_futures

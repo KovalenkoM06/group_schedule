@@ -140,6 +140,15 @@ extension ScheduleDateTimeExtension on DateTime {
       '${hour.toString().padLeft(2, '0')}:'
       '${minute.toString().padLeft(2, '0')}';
 
+  /// Форматує дату й час у стандартний ISO-рядок `YYYY-MM-DDTHH:MM:SS` для перевірки переповнення.
+  String toIsoSecondsString() =>
+      '${year.toString().padLeft(4, '0')}-'
+      '${month.toString().padLeft(2, '0')}-'
+      '${day.toString().padLeft(2, '0')}T'
+      '${hour.toString().padLeft(2, '0')}:'
+      '${minute.toString().padLeft(2, '0')}:'
+      '${second.toString().padLeft(2, '0')}';
+
   /// Обчислює вік дати у днях відносно [now] або [currentSemesterDate].
   int ageInDays({DateTime? now}) =>
       (now ?? currentSemesterDate).difference(this).inDays;
@@ -352,6 +361,18 @@ class ExamSession extends AcademicEvent
       'екзаменатор: $organizer, ${describeRoomUsage()})';
 }
 
+/// Внутрішній запис розібраних полів CSV-рядка для передачі в `Lesson._fromParts`.
+typedef _ParsedLessonFields = ({
+  String subject,
+  String teacher,
+  String type,
+  DayOfWeek day,
+  DateTime startTime,
+  int durationMinutes,
+  double rating,
+  String room,
+});
+
 /// Незмінний клас-сутність заняття в розкладі групи з первинним конструктором (Dart 3.13).
 class const Lesson({
   required final String subject,
@@ -367,23 +388,23 @@ class const Lesson({
   /// Перевірка інваріанта первинного конструктора у списку ініціалізації.
   this : assert(durationMinutes > 0, 'Тривалість має бути додатною'), super();
 
-  /// Допоміжний перенаправляючий конструктор для створення з розібраних полів.
-  Lesson._fromParts(List<String> parts)
+  /// Допоміжний перенаправляючий конструктор, що приймає вже розібраний запис полів.
+  Lesson._fromParts(_ParsedLessonFields fields)
     : this(
-        subject: parts[0],
-        teacher: parts[1],
-        type: parts[2],
-        day: DayOfWeek.tryParse(parts[3]) ?? DayOfWeek.monday,
-        startTime: DateTime.tryParse(parts[4]) ?? currentSemesterDate,
-        durationMinutes: int.tryParse(parts[5]) ?? minDurationMinutes,
-        rating: double.tryParse(parts[6]) ?? minCourseRating,
-        room: parts[7],
+        subject: fields.subject,
+        teacher: fields.teacher,
+        type: fields.type,
+        day: fields.day,
+        startTime: fields.startTime,
+        durationMinutes: fields.durationMinutes,
+        rating: fields.rating,
+        room: fields.room,
       );
 
   /// Іменований конструктор `fromCsv`, який створює екземпляр із CSV-рядка [line].
   ///
   /// Кидає [FormatException], якщо рядок не відповідає очікуваному формату.
-  Lesson.fromCsv(String line) : this._fromParts(_extractValidCsvParts(line));
+  Lesson.fromCsv(String line) : this._fromParts(_requireValidCsvFields(line));
 
   /// Фабричний конструктор із кешуванням розібраних екземплярів у статичному полі [_cache].
   factory Lesson.cached(String line) {
@@ -451,26 +472,19 @@ class const Lesson({
     return 'Без додаткових приміток';
   }
 
-  /// Допоміжний метод перевірки та розбиття CSV-рядка для конструктора `fromCsv`.
-  static List<String> _extractValidCsvParts(String line) {
-    final parsed = tryParseCsv(line);
-    if (parsed.lesson == null) {
-      throw FormatException(parsed.error ?? 'Некоректний CSV-рядок', line);
-    }
-    return line.trim().split(fieldSeparator).map((e) => e.trim()).toList();
-  }
-
-  /// Безпечно розбирає CSV-рядок [line] без винятків, повертаючи [ParseResult].
-  static ParseResult tryParseCsv(String line) {
+  /// Єдине місце розбору CSV-рядка [line] у типізований запис [_ParsedLessonFields].
+  static ({_ParsedLessonFields? fields, String? error}) _parseCsvFields(
+    String line,
+  ) {
     final trimmed = line.trim();
     if (trimmed.isEmpty) {
-      return (lesson: null, error: 'Порожній рядок');
+      return (fields: null, error: 'Порожній рядок');
     }
 
     final parts = trimmed.split(fieldSeparator).map((e) => e.trim()).toList();
     if (parts.length != expectedFieldsCount) {
       return (
-        lesson: null,
+        fields: null,
         error:
             'Неправильна кількість полів: очікувалось $expectedFieldsCount, '
             'а отримано ${parts.length}',
@@ -491,34 +505,34 @@ class const Lesson({
         type.isEmpty ||
         rawDay.isEmpty ||
         room.isEmpty) {
-      return (lesson: null, error: 'Одне з текстових полів порожнє');
+      return (fields: null, error: 'Одне з текстових полів порожнє');
     }
 
     final day = DayOfWeek.tryParse(rawDay);
     if (day == null) {
-      return (lesson: null, error: 'Невідомий день тижня: "$rawDay"');
+      return (fields: null, error: 'Невідомий день тижня: "$rawDay"');
     }
 
     final startTime = DateTime.tryParse(rawDate);
-    if (startTime == null) {
-      return (lesson: null, error: 'Некоректна дата початку: "$rawDate"');
+    if (startTime == null || startTime.toIsoSecondsString() != rawDate) {
+      return (fields: null, error: 'Некоректна дата початку: "$rawDate"');
     }
 
     final durationMinutes = int.tryParse(rawDuration);
     if (durationMinutes == null || durationMinutes <= 0) {
       return (
-        lesson: null,
+        fields: null,
         error: 'Нечислове значення тривалості: "$rawDuration"',
       );
     }
 
     final rating = double.tryParse(rawRating);
     if (rating == null) {
-      return (lesson: null, error: 'Нечислове значення оцінки: "$rawRating"');
+      return (fields: null, error: 'Нечислове значення оцінки: "$rawRating"');
     }
 
     return (
-      lesson: Lesson(
+      fields: (
         subject: subject,
         teacher: teacher,
         type: type,
@@ -532,6 +546,28 @@ class const Lesson({
     );
   }
 
+  /// Перевіряє та повертає розібраний запис полів для конструктора `Lesson.fromCsv`.
+  static _ParsedLessonFields _requireValidCsvFields(String line) {
+    final (:fields, :error) = _parseCsvFields(line);
+    if (fields == null) {
+      throw FormatException(error ?? 'Некоректний CSV-рядок', line);
+    }
+    return fields;
+  }
+
+  /// Безпечно розбирає CSV-рядок [line] без винятків, повертаючи [ParseResult].
+  static ParseResult tryParseCsv(String line) {
+    final (:fields, :error) = _parseCsvFields(line);
+    if (fields == null) {
+      return (lesson: null, error: error);
+    }
+    return (lesson: Lesson._fromParts(fields), error: null);
+  }
+
+  /// Порівнює два заняття за основними атрибутами слота розкладу.
+  ///
+  /// Приватне поле [_notes] свідомо не враховується у `==` та [hashCode],
+  /// оскільки особиста примітка не змінює ідентичність навчального заняття в розкладі.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -545,6 +581,7 @@ class const Lesson({
           rating == other.rating &&
           room == other.room;
 
+  /// Обчислює хеш-код за основними атрибутами заняття (без приватного поля [_notes]).
   @override
   int get hashCode => Object.hash(
     subject,
