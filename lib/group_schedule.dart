@@ -1,5 +1,7 @@
-/// Функції, перелічення та об'єктна модель розкладу занять групи (варіант 4).
+/// Функції, перелічення, об'єктна модель та асинхронна обробка розкладу занять групи (варіант 4).
 library;
+
+import 'dart:async';
 
 /// Роздільник полів у вхідних рядках розкладу.
 const String fieldSeparator = ';';
@@ -888,4 +890,173 @@ String buildReport(
   }
 
   return buffer.toString();
+}
+
+/// Асинхронне сховище сутностей предметної області, кожна операція якого повертає [Future].
+class AsyncRepository<T extends Identifiable> {
+  /// Створює асинхронне сховище із заданою імітацією затримки [operationDelay].
+  AsyncRepository({this.operationDelay = const Duration(milliseconds: 50)});
+
+  /// Затримка, що імітує звернення до зовнішнього джерела даних.
+  final Duration operationDelay;
+
+  final Map<String, T> _items = <String, T>{};
+
+  /// Синхронний знімок поточної кількості елементів (для демонстрації стану до завершення [Future]).
+  int get snapshotCount => _items.length;
+
+  /// Асинхронно зберігає сутність [item] у сховищі.
+  Future<void> save(T item) async {
+    await Future<void>.delayed(operationDelay);
+    _items[item.id] = item;
+  }
+
+  /// Асинхронно зберігає колекцію сутностей [items] у сховищі.
+  Future<void> saveAll(Iterable<T> items) async {
+    for (final item in items) {
+      await save(item);
+    }
+  }
+
+  /// Асинхронно завантажує сутність за ідентифікатором [id] або повертає `null`.
+  Future<T?> load(String id) async {
+    await Future<void>.delayed(operationDelay);
+    return _items[id];
+  }
+
+  /// Асинхронно завантажує незмінний список усіх збережених сутностей.
+  Future<List<T>> loadAll() async {
+    await Future<void>.delayed(operationDelay);
+    return List<T>.unmodifiable(_items.values);
+  }
+
+  /// Асинхронно видаляє сутність за ідентифікатором [id] і повертає `true`, якщо її було знайдено.
+  Future<bool> delete(String id) async {
+    await Future<void>.delayed(operationDelay);
+    return _items.remove(id) != null;
+  }
+}
+
+/// Демонструє помилку «забутий `await`»: повертає кількість елементів у сховищі
+/// одразу після виклику `save` без очікування та після завершення [Future].
+Future<({int countBeforeAwait, int countAfterAwait})> demonstrateForgottenAwait(
+  Lesson sample, {
+  Duration delay = const Duration(milliseconds: 30),
+}) async {
+  final tempRepo = AsyncRepository<Lesson>(operationDelay: delay);
+  final Future<void> pendingSave = tempRepo.save(sample);
+  final countBeforeAwait = tempRepo.snapshotCount;
+  await pendingSave;
+  final countAfterAwait = tempRepo.snapshotCount;
+  return (countBeforeAwait: countBeforeAwait, countAfterAwait: countAfterAwait);
+}
+
+/// Імітує тривалу асинхронну операцію завантаження одного заняття [lesson] із затримкою [delay].
+Future<Lesson> simulateDelayedLessonLoad(
+  Lesson lesson, {
+  Duration delay = const Duration(milliseconds: 500),
+  bool shouldFail = false,
+}) async {
+  await Future<void>.delayed(delay);
+  if (shouldFail) {
+    throw StateError('Збій завантаження заняття "${lesson.subject}"');
+  }
+  return lesson;
+}
+
+/// Вимірює через [Stopwatch] час послідовного (`await` у циклі) та одночасного (`Future.wait`)
+/// виконання трьох асинхронних операцій із затримкою [delay] (за замовчуванням 500 мс).
+Future<({int sequentialMs, int parallelMs})> measureSequentialVsParallel(
+  List<Lesson> lessons, {
+  Duration delay = const Duration(milliseconds: 500),
+}) async {
+  final targets = lessons.take(3).toList();
+
+  final sequentialWatch = Stopwatch()..start();
+  for (final lesson in targets) {
+    await simulateDelayedLessonLoad(lesson, delay: delay);
+  }
+  sequentialWatch.stop();
+
+  final parallelWatch = Stopwatch()..start();
+  await Future.wait<Lesson>(
+    targets.map((lesson) => simulateDelayedLessonLoad(lesson, delay: delay)),
+  );
+  parallelWatch.stop();
+
+  return (
+    sequentialMs: sequentialWatch.elapsedMilliseconds,
+    parallelMs: parallelWatch.elapsedMilliseconds,
+  );
+}
+
+/// Порівнює обробку помилки однієї з трьох одночасних операцій через `Future.wait`
+/// та через розширення `.wait` зі списку (`ParallelWaitError`).
+Future<({String futureWaitInfo, String parallelWaitInfo})>
+compareGroupErrorHandling(
+  List<Lesson> lessons, {
+  Duration delay = const Duration(milliseconds: 30),
+}) async {
+  var futureWaitInfo = '';
+  try {
+    await Future.wait<Lesson>(<Future<Lesson>>[
+      simulateDelayedLessonLoad(lessons[0], delay: delay),
+      simulateDelayedLessonLoad(lessons[1], delay: delay, shouldFail: true),
+      simulateDelayedLessonLoad(lessons[2], delay: delay),
+    ]);
+  } on StateError catch (e) {
+    futureWaitInfo =
+        'Future.wait зловив лише перший виняток ($e), '
+        'результати 2 успішних операцій втрачено';
+  }
+
+  var parallelWaitInfo = '';
+  try {
+    await <Future<Lesson>>[
+      simulateDelayedLessonLoad(lessons[0], delay: delay),
+      simulateDelayedLessonLoad(lessons[1], delay: delay, shouldFail: true),
+      simulateDelayedLessonLoad(lessons[2], delay: delay),
+    ].wait;
+  } on ParallelWaitError<List<Lesson?>, List<AsyncError?>> catch (e) {
+    final succeeded = e.values.whereType<Lesson>().length;
+    final failedIndex = e.errors.indexWhere((err) => err != null);
+    final errorMsg = e.errors[failedIndex]?.error;
+    parallelWaitInfo =
+        'ParallelWaitError зберіг $succeeded успішні результати в e.values '
+        'і помилку в e.errors[$failedIndex]: ($errorMsg)';
+  }
+
+  return (futureWaitInfo: futureWaitInfo, parallelWaitInfo: parallelWaitInfo);
+}
+
+/// Відтворює неспійману асинхронну помилку й демонструє, що синхронний `try/catch`
+/// навколо виклику без `await` її не перехоплює (помилку ловить лише зона `runZonedGuarded`).
+Future<({bool caughtByTryCatch, String zoneError})>
+demonstrateUncaughtAsyncError({
+  Duration delay = const Duration(milliseconds: 20),
+}) {
+  final completer = Completer<({bool caughtByTryCatch, String zoneError})>();
+  var caughtByTryCatch = false;
+
+  runZonedGuarded(
+    () {
+      try {
+        Future<void>.delayed(delay, () {
+          throw StateError('Асинхронний виняток без await');
+        });
+      } on Object {
+        caughtByTryCatch = true;
+      }
+    },
+    (Object error, StackTrace stackTrace) {
+      if (!completer.isCompleted) {
+        completer.complete((
+          caughtByTryCatch: caughtByTryCatch,
+          zoneError: error.toString(),
+        ));
+      }
+    },
+  );
+
+  return completer.future;
 }
