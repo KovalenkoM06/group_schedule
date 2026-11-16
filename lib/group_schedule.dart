@@ -935,6 +935,46 @@ class AsyncRepository<T extends Identifiable> {
     await Future<void>.delayed(operationDelay);
     return _items.remove(id) != null;
   }
+
+  /// Генератор `async*`, який видає сутності по одній з інтервалом [interval].
+  ///
+  /// Якщо [logStart] дорівнює `true`, друкує повідомлення на початку тіла генератора
+  /// (для демонстрації лінивості `async*`, який не стартує до підписки).
+  /// Якщо задано [failAtIndex], кидає [StateError] на елементі з відповідним індексом.
+  Stream<T> watchAll({
+    Duration interval = const Duration(milliseconds: 25),
+    bool logStart = false,
+    void Function()? onStarted,
+    int? failAtIndex,
+  }) async* {
+    if (logStart) {
+      print('  [async*] Тіло генератора watchAll() почало виконання!');
+    }
+    onStarted?.call();
+
+    var index = 0;
+    for (final item in _items.values) {
+      await Future<void>.delayed(interval);
+      if (failAtIndex != null && index == failAtIndex) {
+        throw StateError('Помилка потоку на елементі #$index');
+      }
+      yield item;
+      index++;
+    }
+  }
+}
+
+/// Подія зміни стану розкладу занять групи для потокової обробки через [StreamController].
+class const ScheduleEvent({
+  required final String action,
+  required final Lesson lesson,
+}) {
+  /// Ініціалізує подію зміни стану розкладу.
+  this : assert(action.length > 0, 'Назва дії не може бути порожньою');
+
+  @override
+  String toString() =>
+      '[$action] ${lesson.subject} (${lesson.day.shortName}, ауд. ${lesson.room})';
 }
 
 /// Демонструє помилку «забутий `await`»: повертає кількість елементів у сховищі
@@ -1060,3 +1100,152 @@ demonstrateUncaughtAsyncError({
 
   return completer.future;
 }
+
+/// Демонструє буферизацію `StreamController` (додавання 3 подій ДО підписки)
+/// та споживання потоку через `listen()` зі збереженням і явним скасуванням [StreamSubscription].
+Future<List<ScheduleEvent>> demonstrateBufferedControllerListen(
+  List<Lesson> lessons,
+) async {
+  final controller = StreamController<ScheduleEvent>();
+
+  // Додаємо 3 події ДО того, як на потік з'явиться підписник
+  controller
+    ..add(ScheduleEvent(action: 'ДОДАНО', lesson: lessons[0]))
+    ..add(ScheduleEvent(action: 'ОНОВЛЕНО', lesson: lessons[1]))
+    ..add(ScheduleEvent(action: 'ПЕРЕНЕСЕНО', lesson: lessons[2]));
+
+  final received = <ScheduleEvent>[];
+  final doneCompleter = Completer<void>();
+
+  final StreamSubscription<ScheduleEvent> subscription = controller.stream
+      .listen((ScheduleEvent event) {
+        received.add(event);
+        if (received.length == 3 && !doneCompleter.isCompleted) {
+          doneCompleter.complete();
+        }
+      });
+
+  try {
+    await doneCompleter.future;
+  } finally {
+    await subscription.cancel();
+    await controller.close();
+  }
+
+  return received;
+}
+
+/// Порівнює поведінку `await for` та `listen(cancelOnError: false)`
+/// при виникненні помилки всередині потоку (на елементі з індексом [failAtIndex]).
+Future<({List<String> awaitForLog, List<String> listenLog})>
+compareMidStreamErrorHandling(
+  AsyncRepository<Lesson> repository, {
+  int failAtIndex = 1,
+  Duration interval = const Duration(milliseconds: 15),
+}) async {
+  final awaitForLog = <String>[];
+  try {
+    await for (final lesson in repository.watchAll(
+      interval: interval,
+      failAtIndex: failAtIndex,
+    )) {
+      awaitForLog.add('Отримано: ${lesson.subject} (${lesson.type})');
+    }
+  } on StateError catch (e) {
+    awaitForLog.add('Цикл await for перервано помилкою: $e');
+  }
+
+  final listenLog = <String>[];
+  final doneCompleter = Completer<void>();
+  final StreamSubscription<Lesson> subscription = repository
+      .watchAll(interval: interval, failAtIndex: failAtIndex)
+      .listen(
+        (Lesson lesson) {
+          listenLog.add('Отримано: ${lesson.subject} (${lesson.type})');
+        },
+        onError: (Object error) {
+          listenLog.add('Оброблено в onError (потік триває): $error');
+        },
+        onDone: () {
+          if (!doneCompleter.isCompleted) {
+            doneCompleter.complete();
+          }
+        },
+        cancelOnError: false,
+      );
+
+  try {
+    await doneCompleter.future;
+  } finally {
+    await subscription.cancel();
+  }
+
+  return (awaitForLog: awaitForLog, listenLog: listenLog);
+}
+
+/// Демонструє різницю між потоком одноразової підписки та широкомовним (`broadcast`):
+/// повертає текст помилки повторної підписки на одноразовий потік і кількість подій у двох слухачів `broadcast`.
+Future<
+  ({
+    String singleSubscriptionError,
+    int broadcastFirstCount,
+    int broadcastSecondCount,
+  })
+>
+compareSingleAndBroadcastStreams(List<Lesson> lessons) async {
+  final singleController = StreamController<ScheduleEvent>();
+  final StreamSubscription<ScheduleEvent> firstSub = singleController.stream
+      .listen((_) {});
+  var singleError = '';
+
+  try {
+    final StreamSubscription<ScheduleEvent> secondSub = singleController.stream
+        .listen((_) {});
+    await secondSub.cancel();
+  } on StateError catch (e) {
+    singleError = e.toString();
+  } finally {
+    await firstSub.cancel();
+    await singleController.close();
+  }
+
+  final broadcastController = StreamController<ScheduleEvent>.broadcast();
+  var countA = 0;
+  var countB = 0;
+
+  final StreamSubscription<ScheduleEvent> subA = broadcastController.stream
+      .listen((_) => countA++);
+  final StreamSubscription<ScheduleEvent> subB = broadcastController.stream
+      .listen((_) => countB++);
+
+  try {
+    broadcastController
+      ..add(ScheduleEvent(action: 'ДОДАНО', lesson: lessons[0]))
+      ..add(ScheduleEvent(action: 'ОНОВЛЕНО', lesson: lessons[1]));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  } finally {
+    await subA.cancel();
+    await subB.cancel();
+    await broadcastController.close();
+  }
+
+  return (
+    singleSubscriptionError: singleError,
+    broadcastFirstCount: countA,
+    broadcastSecondCount: countB,
+  );
+}
+
+/// Будує конвеєр трансформації потоку подій предметної області (`where -> map -> take`).
+Stream<String> buildScheduleEventPipeline(
+  Stream<ScheduleEvent> source, {
+  double minRating = highRatingThreshold,
+  int takeCount = 3,
+}) => source
+    .where((event) => event.lesson.rating >= minRating)
+    .map(
+      (event) =>
+          '[${event.action}] ${event.lesson.subject} '
+          '(${event.lesson.type}, оцінка ${event.lesson.rating}, ауд. ${event.lesson.room})',
+    )
+    .take(takeCount);
