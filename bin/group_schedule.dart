@@ -1,93 +1,146 @@
+import 'dart:async';
+
 import 'package:group_schedule/group_schedule.dart';
 
-/// Точка входу консольної програми для лабораторної роботи №2.
-void main(List<String> arguments) {
-  final counter = makeProcessedCounter();
-  final repository = Repository<Lesson>();
+/// Точка входу консольної програми для лабораторної роботи №3.
+Future<void> main(List<String> arguments) async {
+  final validLessons = parseValidLessons(rawScheduleInput);
+  final asyncRepo = AsyncRepository<Lesson>(
+    operationDelay: const Duration(milliseconds: 20),
+  );
+  await asyncRepo.saveAll(validLessons.take(4));
 
-  print('--- Перевірка вхідних рядків розкладу та наповнення сховища ---');
-  for (final line in rawScheduleInput) {
-    final rowNumber = counter();
-    // Деструктуризація запису ParseResult під час розбору
-    final (:lesson, :error) = parseLineWithDetails(line);
+  print('=== 1. Помилка "забутий await" та AsyncRepository ===');
+  final (:countBeforeAwait, :countAfterAwait) = await demonstrateForgottenAwait(
+    validLessons.first,
+  );
+  print(
+    'Кількість елементів одразу після save() без await: $countBeforeAwait, '
+    'після await: $countAfterAwait',
+  );
+  final loadedFirst = await asyncRepo.load(validLessons.first.id);
+  print('Завантажено за id: ${loadedFirst?.subject} (${loadedFirst?.room})');
 
-    if (lesson == null) {
-      print('Рядок #$rowNumber пропущено (помилка розбору): $error');
-    } else {
-      final violations = validateLesson(lesson);
-      if (violations.isEmpty) {
-        repository.add(Lesson.cached(line));
-      } else {
-        print(
-          'Рядок #$rowNumber (${lesson.subject}) має порушення діапазонів: '
-          '${violations.join(', ')}',
-        );
-      }
-    }
+  print('');
+  print(
+    '=== 2. Порівняння послідовного та одночасного виконання (3 x 500 мс) ===',
+  );
+  final (:sequentialMs, :parallelMs) = await measureSequentialVsParallel(
+    validLessons,
+  );
+  print('Послідовні await (3 операції по 500 мс): $sequentialMs мс');
+  print('Одночасно через Future.wait (3 операції по 500 мс): $parallelMs мс');
+
+  print('');
+  print(
+    '=== 3. Обробка помилок групи (Future.wait vs .wait / ParallelWaitError) ===',
+  );
+  final (:futureWaitInfo, :parallelWaitInfo) = await compareGroupErrorHandling(
+    validLessons,
+  );
+  print('  • $futureWaitInfo');
+  print('  • $parallelWaitInfo');
+
+  print('');
+  print('=== 4. Неспіймана асинхронна помилка (try/catch без await) ===');
+  final (:caughtByTryCatch, :zoneError) = await demonstrateUncaughtAsyncError();
+  print(
+    'Спіймано синхронним try/catch: $caughtByTryCatch | '
+    'Перехоплено зоною: $zoneError',
+  );
+
+  print('');
+  print('=== 5. Генератор async* (watchAll), доказ лінивості та await for ===');
+  final lazyStream = asyncRepo.watchAll(
+    interval: const Duration(milliseconds: 15),
+    logStart: true,
+  );
+  print('  [main] Потік watchAll() створено, але підписки ще немає...');
+  await for (final lesson in lazyStream) {
+    print('  [await for] Отримано: ${lesson.subject} (${lesson.type})');
   }
 
   print('');
-  print('--- Перевірка рівності обʼєктів (==, hashCode) та кешу ---');
-  final firstCsv = rawScheduleInput.first;
-  final copyA = Lesson.fromCsv(firstCsv);
-  final copyB = Lesson.fromCsv(firstCsv);
-  final uniqueSet = <Lesson>{copyA, copyB};
   print(
-    'Два окремі екземпляри Lesson.fromCsv: '
-    'identical = ${identical(copyA, copyB)}, '
-    'copyA == copyB = ${copyA == copyB}, '
-    'розмір Set = ${uniqueSet.length}',
+    '=== 6. Буферизація StreamController (3 події ДО підписки) та listen() ===',
   );
-  print(
-    'Кешовані екземпляри Lesson.cached: '
-    'identical = ${identical(Lesson.cached(firstCsv), Lesson.cached(firstCsv))}, '
-    'усього в кеші: ${Lesson.cacheSize}',
+  final bufferedEvents = await demonstrateBufferedControllerListen(
+    validLessons,
   );
-
-  final fallback = Lesson.fromCsvOrDefault('пошкоджений_рядок');
-  print(
-    'Заняття за замовчуванням: ${fallback.subject} (${fallback.formatNotes()})',
-  );
-
-  print('');
-  print(
-    '--- Поліморфізм, sealed-ієрархія, домішка та зіставлення зі зразком ---',
-  );
-  for (final lesson in repository.all.take(4)) {
-    final activity = lesson.activity;
-    final weight = activityWeight(activity);
-    final loadType = classifyLessonLoad(lesson);
-    print(
-      '  • ${lesson.subject} [${activity.describeActivity()}, вага: $weight, '
-      'самостійна: ${lesson.recommendedSelfStudyMinutes} хв] -> $loadType',
-    );
+  for (final event in bufferedEvents) {
+    print('  [listen] $event');
   }
 
-  final exam = ExamSession(
-    title: 'Підсумковий залік з Програмування мовою Dart',
-    organizer: 'Баличев М. Д.',
-    examDate: DateTime(2026, 12, 24, 10, 0),
-    room: 'І-304',
+  print('');
+  print(
+    '=== 7. Помилка всередині потоку: await for vs listen(cancelOnError: false) ===',
   );
-  print('  • Подія з іншої гілки ієрархії (домішка): $exam');
+  final (:awaitForLog, :listenLog) = await compareMidStreamErrorHandling(
+    asyncRepo,
+  );
+  print('  Режим await for:');
+  for (final entry in awaitForLog) {
+    print('    - $entry');
+  }
+  print('  Режим listen (cancelOnError: false):');
+  for (final entry in listenLog) {
+    print('    - $entry');
+  }
 
   print('');
-  print(buildReport(repository.all));
-
-  // Перевірка пошуку у сховищі та маскування аудиторій
-  final dartTeacherFilter = makeTeacherFilter('Баличев');
-  final dartLessons = sortByStartTime(repository.where(dartTeacherFilter));
-
-  print(
-    '--- Заняття викладача "Баличев" зі сховища (з маскуванням аудиторій) ---',
+  print('=== 8. Потік одноразової підписки vs широкомовний (broadcast) ===');
+  final (
+    :singleSubscriptionError,
+    :broadcastFirstCount,
+    :broadcastSecondCount,
+  ) = await compareSingleAndBroadcastStreams(
+    validLessons,
   );
+  print('  Повторна підписка на одноразовий потік: $singleSubscriptionError');
   print(
-    buildReport(
-      dartLessons,
-      topCount: 3,
-      ascending: true,
-      separator: ' ; ',
-      maskRooms: true,
+    '  Широкомовний потік (2 підписники): '
+    'перший отримав $broadcastFirstCount події, другий — $broadcastSecondCount події',
+  );
+
+  print('');
+  print('=== 9. Конвеєр трансформації потоку (where -> map -> take) ===');
+  final sourceEvents = Stream<ScheduleEvent>.fromIterable(
+    validLessons.map(
+      (lesson) => ScheduleEvent(action: 'РОЗКЛАД', lesson: lesson),
     ),
+  );
+  await for (final formatted in buildScheduleEventPipeline(sourceEvents)) {
+    print('  [pipeline] $formatted');
+  }
+
+  print('');
+  print(
+    '=== 10. Важке обчислення в Isolate.run та ізоляція глобальної змінної ===',
+  );
+  final (
+    :mainIsolateMs,
+    :workerIsolateMs,
+    :sequentialTwoTasksMs,
+    :parallelTwoIsolatesMs,
+    :digest,
+    :globalBefore,
+    :globalInsideWorker,
+    :globalAfterInMain,
+  ) = await benchmarkScheduleIsolate(
+    validLessons,
+  );
+  print(
+    '  Одне обчислення (контрольна сума $digest): '
+    'головний ізолят = $mainIsolateMs мс, Isolate.run = $workerIsolateMs мс',
+  );
+  print(
+    '  Два важкі обчислення: '
+    'послідовно в головному = $sequentialTwoTasksMs мс, '
+    'паралельно у двох Isolate.run = $parallelTwoIsolatesMs мс',
+  );
+  print(
+    '  Глобальна змінна globalIsolateProbe: '
+    'до запуску = $globalBefore, змінено в ізоляті на = $globalInsideWorker, '
+    'у головному ізоляті після завершення = $globalAfterInMain',
   );
 }

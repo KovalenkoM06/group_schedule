@@ -2,6 +2,10 @@
 library;
 
 import 'dart:async';
+import 'dart:isolate';
+
+/// Глобальна змінна для демонстрації ізольованості пам'яті в `Isolate.run`.
+int globalIsolateProbe = 100;
 
 /// Роздільник полів у вхідних рядках розкладу.
 const String fieldSeparator = ';';
@@ -956,9 +960,12 @@ class AsyncRepository<T extends Identifiable> {
     for (final item in _items.values) {
       await Future<void>.delayed(interval);
       if (failAtIndex != null && index == failAtIndex) {
-        throw StateError('Помилка потоку на елементі #$index');
+        yield* Stream<T>.error(
+          StateError('Помилка потоку на елементі #$index'),
+        );
+      } else {
+        yield item;
       }
-      yield item;
       index++;
     }
   }
@@ -1249,3 +1256,88 @@ Stream<String> buildScheduleEventPipeline(
           '(${event.lesson.type}, оцінка ${event.lesson.rating}, ауд. ${event.lesson.room})',
     )
     .take(takeCount);
+
+/// Важке синхронне обчислення: моделює аналіз варіантів розкладу та
+/// обчислює контрольну суму навантаження за [iterations] проходів.
+int computeScheduleHeavyDigest(
+  List<Lesson> lessons, {
+  int iterations = 1200000,
+}) {
+  var digest = 0;
+  for (var i = 0; i < iterations; i++) {
+    for (final lesson in lessons) {
+      final weight = (lesson.rating * 100).round();
+      digest =
+          (digest * 31 +
+              lesson.durationMinutes * weight +
+              lesson.day.weekdayNumber +
+              i) &
+          0x7FFFFFFF;
+    }
+  }
+  return digest;
+}
+
+/// Заміряє час виконання важкого синхронного обчислення в головному ізоляті та через `Isolate.run`,
+/// а також перевіряє спробу змінити глобальну змінну [globalIsolateProbe] всередині ізолята.
+Future<
+  ({
+    int mainIsolateMs,
+    int workerIsolateMs,
+    int sequentialTwoTasksMs,
+    int parallelTwoIsolatesMs,
+    int digest,
+    int globalBefore,
+    int globalInsideWorker,
+    int globalAfterInMain,
+  })
+>
+benchmarkScheduleIsolate(
+  List<Lesson> lessons, {
+  int iterations = 1200000,
+}) async {
+  globalIsolateProbe = 100;
+  final globalBefore = globalIsolateProbe;
+
+  final mainWatch = Stopwatch()..start();
+  final mainDigest = computeScheduleHeavyDigest(
+    lessons,
+    iterations: iterations,
+  );
+  mainWatch.stop();
+
+  final workerWatch = Stopwatch()..start();
+  final (:workerDigest, :workerProbeValue) = await Isolate.run(() {
+    globalIsolateProbe = 777;
+    final result = computeScheduleHeavyDigest(lessons, iterations: iterations);
+    return (workerDigest: result, workerProbeValue: globalIsolateProbe);
+  });
+  workerWatch.stop();
+
+  final seqTwoWatch = Stopwatch()..start();
+  computeScheduleHeavyDigest(lessons, iterations: iterations);
+  computeScheduleHeavyDigest(lessons, iterations: iterations);
+  seqTwoWatch.stop();
+
+  final parTwoWatch = Stopwatch()..start();
+  await Future.wait<int>(<Future<int>>[
+    Isolate.run(
+      () => computeScheduleHeavyDigest(lessons, iterations: iterations),
+    ),
+    Isolate.run(
+      () => computeScheduleHeavyDigest(lessons, iterations: iterations),
+    ),
+  ]);
+  parTwoWatch.stop();
+
+  return (
+    mainIsolateMs: mainWatch.elapsedMilliseconds,
+    workerIsolateMs: workerWatch.elapsedMilliseconds,
+    sequentialTwoTasksMs: seqTwoWatch.elapsedMilliseconds,
+    parallelTwoIsolatesMs: parTwoWatch.elapsedMilliseconds,
+    digest: mainDigest ^ (mainDigest - workerDigest),
+    globalBefore: globalBefore,
+    globalInsideWorker: workerProbeValue,
+    globalAfterInMain: globalIsolateProbe,
+  );
+}
